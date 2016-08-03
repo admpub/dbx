@@ -5,7 +5,6 @@
 package dbx
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 )
@@ -116,11 +115,7 @@ func (s *SelectQuery) OrWhere(e Expression) *SelectQuery {
 // Join specifies a JOIN clause.
 // The "typ" parameter specifies the JOIN type (e.g. "INNER JOIN", "LEFT JOIN").
 func (s *SelectQuery) Join(typ string, table string, on Expression) *SelectQuery {
-	if s.join == nil {
-		s.join = []JoinInfo{JoinInfo{typ, table, on}}
-	} else {
-		s.join = append(s.join, JoinInfo{typ, table, on})
-	}
+	s.join = append(s.join, JoinInfo{typ, table, on})
 	return s
 }
 
@@ -305,7 +300,7 @@ func (s *SelectQuery) Model(pk, model interface{}) error {
 	if len(si.pkNames) == 0 {
 		return MissingPKError
 	}
-	return errors.New("composite primary key is not supported")
+	return CompositePKError
 }
 
 // All executes the SELECT query and populates all rows of the result into a slice.

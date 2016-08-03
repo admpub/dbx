@@ -8,6 +8,7 @@ import (
 	ss "database/sql"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -50,7 +51,7 @@ type Customer struct {
 	Address ss.NullString
 }
 
-func (m *Customer) TableName() string {
+func (m Customer) TableName() string {
 	return "customer"
 }
 
@@ -62,7 +63,7 @@ type CustomerPtr struct {
 	Address *string
 }
 
-func (m *CustomerPtr) TableName() string {
+func (m CustomerPtr) TableName() string {
 	return "customer"
 }
 
@@ -79,12 +80,12 @@ func (m CustomerNull) TableName() string {
 }
 
 type CustomerEmbedded struct {
-	ID    int
+	Id    int
 	Email *string
 	InnerCustomer
 }
 
-func (m *CustomerEmbedded) TableName() string {
+func (m CustomerEmbedded) TableName() string {
 	return "customer"
 }
 
@@ -187,7 +188,7 @@ func TestQuery_Rows(t *testing.T) {
 	sql = `SELECT * FROM customer WHERE id={:id}`
 	err = db.NewQuery(sql).Bind(Params{"id": 2}).One(&customerEmbedded)
 	if assert.Nil(t, err) {
-		assert.Equal(t, customerEmbedded.ID, 2, "customer.ID")
+		assert.Equal(t, customerEmbedded.Id, 2, "customer.ID")
 		assert.Equal(t, *customerEmbedded.Email, `user2@example.com`, "customer.Email")
 		assert.Equal(t, customerEmbedded.Status.Int64, int64(1), "customer.Status")
 	}
@@ -276,6 +277,18 @@ func TestQuery_Rows(t *testing.T) {
 	assert.NotEqual(t, err, nil, "LastError@0")
 	assert.Equal(t, customer.ID, 100, "LastError@1")
 	assert.Equal(t, q.LastError, nil, "LastError@2")
+
+	// Query.Column
+	sql = `SELECT name, id FROM customer ORDER BY id`
+	var names []string
+	err = db.NewQuery(sql).Column(&names)
+	if assert.Nil(t, err) && assert.Equal(t, 3, len(names)) {
+		assert.Equal(t, "user1", names[0])
+		assert.Equal(t, "user2", names[1])
+		assert.Equal(t, "user3", names[2])
+	}
+	err = db.NewQuery(sql).Column(names)
+	assert.NotNil(t, err)
 }
 
 func TestQuery_logSQL(t *testing.T) {
@@ -307,9 +320,47 @@ func TestReplacePlaceholders(t *testing.T) {
 }
 
 func TestIssue6(t *testing.T) {
-	db := getDB()
+	db := getPreparedDB()
 	q := db.Select("*").From("customer").Where(HashExp{"id": 1})
 	var customer Customer
 	assert.Equal(t, q.One(&customer), nil)
 	assert.Equal(t, 1, customer.ID)
+}
+
+type User struct {
+	ID      int64
+	Email   string
+	Created time.Time
+	Updated *time.Time
+}
+
+func TestIssue13(t *testing.T) {
+	db := getPreparedDB()
+	var user User
+	err := db.Select().From("user").Where(HashExp{"id": 1}).One(&user)
+	if assert.Nil(t, err) {
+		assert.NotZero(t, user.Created)
+		assert.Nil(t, user.Updated)
+	}
+
+	now := time.Now()
+
+	user2 := User{
+		Email:   "now@example.com",
+		Created: now,
+	}
+	err = db.Model(&user2).Insert()
+	if assert.Nil(t, err) {
+		assert.NotZero(t, user2.ID)
+	}
+
+	user3 := User{
+		Email:   "now@example.com",
+		Created: now,
+		Updated: &now,
+	}
+	err = db.Model(&user3).Insert()
+	if assert.Nil(t, err) {
+		assert.NotZero(t, user2.ID)
+	}
 }

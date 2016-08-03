@@ -90,6 +90,7 @@ func newStructValue(model interface{}, mapper FieldMapFunc) *structValue {
 	}
 }
 
+// pk returns the primary key values indexed by the corresponding primary key column names.
 func (s *structValue) pk() map[string]interface{} {
 	if len(s.pkNames) == 0 {
 		return nil
@@ -97,6 +98,7 @@ func (s *structValue) pk() map[string]interface{} {
 	return s.columns(s.pkNames, nil)
 }
 
+// columns returns the struct field values indexed by their corresponding DB column names.
 func (s *structValue) columns(include, exclude []string) map[string]interface{} {
 	v := map[string]interface{}{}
 	if len(include) == 0 {
@@ -176,7 +178,7 @@ func (si *structInfo) build(a reflect.Type, path []int, namePrefix, dbNamePrefix
 			name = ""
 		}
 
-		if ft.Kind() == reflect.Struct && !reflect.PtrTo(ft).Implements(scannerType) {
+		if isNestedStruct(ft) {
 			// dive into non-scanner struct
 			si.build(ft, path2, concat(namePrefix, name), concat(dbNamePrefix, dbName), mapper)
 		} else if dbName != "" {
@@ -200,6 +202,13 @@ func (si *structInfo) build(a reflect.Type, path []int, namePrefix, dbNamePrefix
 			si.pkNames = append(si.pkNames, "Id")
 		}
 	}
+}
+
+func isNestedStruct(t reflect.Type) bool {
+	if t.PkgPath() == "time" && t.Name() == "Time" {
+		return false
+	}
+	return t.Kind() == reflect.Struct && !reflect.PtrTo(t).Implements(scannerType)
 }
 
 func parseTag(tag string) (string, bool) {
@@ -237,6 +246,11 @@ func indirect(v reflect.Value) reflect.Value {
 // getTableName returns the table name corresponding to the given model struct or slice of structs.
 func getTableName(a interface{}) string {
 	if tm, ok := a.(TableModel); ok {
+		v := reflect.ValueOf(a)
+		if v.Kind() == reflect.Ptr && v.IsNil() {
+			a = reflect.New(v.Type().Elem()).Interface()
+			return a.(TableModel).TableName()
+		}
 		return tm.TableName()
 	}
 	t := reflect.TypeOf(a)

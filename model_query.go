@@ -1,6 +1,9 @@
 package dbx
 
-import "errors"
+import (
+	"errors"
+	"reflect"
+)
 
 type (
 	// TableModel is the interface that should be implemented by models which have unconventional table names.
@@ -17,8 +20,10 @@ type (
 	}
 )
 
-// MissingPKError represents the error that a model struct does not have a primary key declaration.
-var MissingPKError = errors.New("missing primary key declaration")
+var (
+	MissingPKError   = errors.New("missing primary key declaration")
+	CompositePKError = errors.New("composite primary key is not supported")
+)
 
 func newModelQuery(model interface{}, fieldMapFunc FieldMapFunc, builder Builder) *ModelQuery {
 	q := &ModelQuery{
@@ -51,28 +56,39 @@ func (q *ModelQuery) Insert(attrs ...string) error {
 	}
 	tableName := q.model.tableName
 	cols := q.model.columns(attrs, q.exclude)
-	pk := q.model.pk()
-	ai := ""
-	for pkc := range pk {
-		if col, ok := cols[pkc]; ok {
-			if col == nil || col == 0 {
-				delete(cols, pkc)
-				ai = pkc
-			}
-		} else {
-			ai = pkc
+	pkName := ""
+	for name, value := range q.model.pk() {
+		if isAutoInc(value) {
+			delete(cols, name)
+			pkName = name
+			break
 		}
 	}
 
 	result, err := q.builder.Insert(tableName, Params(cols)).Execute()
-	if err == nil && ai != "" {
+	if err == nil && pkName != "" {
 		pkValue, err := result.LastInsertId()
 		if err != nil {
 			return err
 		}
-		indirect(q.model.dbNameMap[ai].getField(q.model.value)).SetInt(pkValue)
+		indirect(q.model.dbNameMap[pkName].getField(q.model.value)).SetInt(pkValue)
 	}
 	return err
+}
+
+func isAutoInc(value interface{}) bool {
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return v.Int() == 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return v.Uint() == 0
+	case reflect.Ptr:
+		return v.IsNil() || isAutoInc(v.Elem())
+	case reflect.Invalid:
+		return true
+	}
+	return false
 }
 
 // Update updates a row in the table using the struct model associated with this query.

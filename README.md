@@ -35,6 +35,12 @@ Run the following command to install the package:
 go get github.com/go-ozzo/ozzo-dbx
 ```
 
+You may also get specified release of the package by:
+
+```
+go get gopkg.in/go-ozzo/ozzo-dbx.v1
+```
+
 In addition, install the specific DB driver package for the kind of database to be used. Please refer to
 [SQL database drivers](https://github.com/golang/go/wiki/SQLDrivers) for a complete list. For example, if you are
 using MySQL, you may install the following package:
@@ -167,6 +173,7 @@ which will execute the query and populate the result into the specified variable
 
 * `Query.All()`: populate all rows of the result into a slice of structs or `NullString` maps.
 * `Query.One()`: populate the first row of the result into a struct or a `NullString` map.
+* `Query.Column()`: populate the first column of the result into a slice.
 * `Query.Row()`: populate the first row of the result into a list of variables, one for each returning column.
 * `Query.Rows()`: returns a `dbx.Rows` instance to allow retrieving data row by row.
 
@@ -204,6 +211,10 @@ fmt.Println(user.ID, user.Name)
 err = q.One(&row)
 fmt.Println(row["id"], row["name"])
 
+var ids []int
+err = q.Column(&ids)
+fmt.Println(ids)
+
 // populate the first row into id and name
 err = q.Row(&id, &name)
 
@@ -226,6 +237,10 @@ When populating a struct, the following rules are used to determine which column
   according to the rules described above.
 * For named fields that are of struct type, they will also be expanded. But their component fields will be prefixed
   with the struct names when being populated.
+  
+An exception to the above struct expansion is that when a struct type implements `sql.Scanner` or when it is `time.Time`.
+In this case, the field will be populated as a whole by the DB driver. Also, if a field is a pointer to some type,
+the field will be allocated memory and populated with the query result if it is not null. 
 
 The following example shows how fields are populated according to the rules above:
 
@@ -234,19 +249,25 @@ type User struct {
 	id     int
 	Type   int `db:"-"`
 	MyName string `db:"name"`
-	Prof   Profile
+	Profile
+	Address Address `db:"addr"`
 }
 
 type Profile struct {
 	Age int
+}
+
+type Address struct {
+	City string
 }
 ```
 
 * `User.id`: not populated because the field is not exported;
 * `User.Type`: not populated because the `db` tag is `-`;
 * `User.MyName`: to be populated from the `name` column, according to the `db` tag;
-* `Profile.Age`: to be populated from the `prof.age` column, since `Prof` is a named field of struct type
-  and its fields will be prefixed with `prof.`.
+* `Profile.Age`: to be populated from the `age` column, since `Profile` is an anonymous field;
+* `Address.City`: to be populated from the `addr.city` column, since `Address` is a named field of struct type
+  and its fields will be prefixed with `addr.` according to the `db` tag.
 
 Note that if a column in the result does not have a corresponding struct field, it will be ignored. Similarly,
 if a struct field does not have a corresponding column in the result, it will not be populated.
@@ -420,8 +441,17 @@ operations without the need of writing plain SQL statements.
 To use the CRUD feature, first define a struct type for a table. By default, a struct is associated with a table
 whose name is the snake case version of the struct type name. For example, a struct named `MyCustomer`
 corresponds to the table name `my_customer`. You may explicitly specify the table name for a struct by implementing
-the `dbx.TableModel` interface. That is, define a struct method named `TableName` which should return the actual
-table name.
+the `dbx.TableModel` interface. For example,
+
+```go
+type MyCustomer struct{}
+
+func (c MyCustomer) TableName() string {
+	return "customer"
+}
+```
+
+Note that the `TableName` method should be defined with a value receiver instead of a pointer receiver. 
 
 If the struct has a field named `ID` or `Id`, by default the field will be treated as the primary key field.
 If you want to use a different field as the primary key, tag it with `db:"pk"`. You may tag multiple fields
@@ -452,8 +482,8 @@ err := db.Model(&customer).Insert()
 ```
 
 This will insert a row using the values from *all* public fields (except the primary key field if it is empty) in the struct.
-If a primary key field is empty, it is assumed to be auto-incremental and will be automatically filled with
-the last insertion ID after a successful insertion.
+If a primary key field is zero (a integer zero or a nil pointer), it is assumed to be auto-incremental and 
+will be automatically filled with the last insertion ID after a successful insertion.
 
 You can explicitly specify the fields that should be inserted by passing the list of the field names to the `Insert()` method.
 You can also exclude certain fields from being inserted by calling `Exclude()` before calling `Insert()`. For example,
@@ -535,6 +565,27 @@ specified by the model. If the model does not have a primary key, an error will 
 db, _ := dbx.Open("mysql", "user:pass@/example")
 
 db.Model(&customer).Delete()
+```
+
+### Null Handling
+
+To represent a nullable database value, you can use a pointer type. If the pointer is nil, it means the corresponding 
+database value is null. 
+
+Another option to represent a database null is to use `sql.NullXyz` types. For example, if a string column is nullable,
+you may use `sql.NullString`. The `NullString.Valid` field indicates whether the value is a null or not, and 
+`NullString.String` returns the string value when it is not null. Because `sql.NulLXyz` types do not handle JSON 
+marshalling, you may use the [null package](https://github.com/guregu/null), instead. 
+
+Below is an example of handling nulls:
+
+```go
+type Customer struct {
+	ID        int
+	Email     string
+	FirstName *string        // use pointer to represent null
+	LastName  sql.NullString // use sql.NullString to represent null
+}
 ```
 
 ## Quoting Table and Column Names
